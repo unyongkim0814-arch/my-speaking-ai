@@ -33,6 +33,7 @@
 	},
 	"dependencies": {
 		"@openai/agents": "^0.4.3",
+		"@supabase/supabase-js": "^2.93.2",
 		"openai": "^6.16.0"
 	}
 }

@@ -26,21 +26,37 @@ npx sv create --template minimal --no-types --add eslint vitest="usages:unit,com
 npm install
 ```
 
-### 2. OpenAI API 키 설정
+### 2. 환경 변수 설정
 
-`.env` 파일을 생성하고 OpenAI API 키를 설정하세요:
+`.env` 파일을 생성하고 다음 환경 변수들을 설정하세요:
 
 ```sh
 cp .env.example .env
 ```
 
-`.env` 파일을 열어서 API 키를 입력:
+`.env` 파일을 열어서 필요한 값들을 입력:
 
 ```
-OPENAI_API_KEY=your-api-key-here
+# OpenAI API Key
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Supabase (서버 사이드)
+SUPABASE_DB_URL=your-supabase-url
+SUPABASE_DB_PUBLIC_KEY=your-supabase-anon-key
+
+# Supabase (클라이언트 사이드)
+PUBLIC_SUPABASE_URL=your-supabase-url
+PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
-OpenAI API 키는 [OpenAI Platform](https://platform.openai.com/api-keys)에서 발급받을 수 있습니다.
+#### OpenAI API 키 발급
+- [OpenAI Platform](https://platform.openai.com/api-keys)에서 API 키를 발급받을 수 있습니다.
+
+#### Supabase 설정
+1. [Supabase](https://supabase.com)에 가입하고 새 프로젝트를 생성합니다.
+2. 프로젝트 대시보드에서 **Settings** > **API**로 이동합니다.
+3. **Project URL**과 **anon public** 키를 복사하여 `.env` 파일에 입력합니다.
+4. Supabase에서 **Authentication**이 자동으로 활성화되어 있어야 합니다.
 
 ### 3. 필요한 패키지 설치
 
@@ -63,6 +79,12 @@ npm run dev -- --open
 
 ## 기능
 
+### 🔐 사용자 인증
+- Supabase Auth를 사용한 회원가입 및 로그인
+- 이메일/비밀번호 기반 인증
+- 로그인 상태 관리
+- 보호된 라우트 (로그인 필요)
+
 ### 📼 녹음 모드
 - 음성 녹음 및 재생
 - 실시간 음파 그래프 표시
@@ -76,11 +98,20 @@ npm run dev -- --open
 
 ## 사용 방법
 
-1. **녹음 모드**: 기본 녹음 기능을 사용하여 음성을 녹음하고 재생할 수 있습니다.
-2. **실시간 대화 모드**: "실시간 대화 시작" 버튼을 클릭하여 영어 튜터와 실시간으로 대화할 수 있습니다.
-   - 마이크 권한이 필요합니다.
-   - 연결되면 영어로 말하면 AI 튜터가 응답합니다.
-   - 대화 내용이 실시간으로 텍스트로 표시됩니다.
+### 1. 회원가입 및 로그인
+- 첫 방문 시 `/signup` 페이지에서 회원가입을 진행합니다.
+- 이메일과 비밀번호(최소 6자)를 입력하여 계정을 생성합니다.
+- 회원가입 후 입력한 이메일로 인증 메일이 발송됩니다. (Supabase 설정에 따라 다를 수 있음)
+- `/login` 페이지에서 이메일과 비밀번호로 로그인합니다.
+
+### 2. 녹음 모드
+- 기본 녹음 기능을 사용하여 음성을 녹음하고 재생할 수 있습니다.
+
+### 3. 실시간 대화 모드
+- "실시간 대화 시작" 버튼을 클릭하여 영어 튜터와 실시간으로 대화할 수 있습니다.
+- 마이크 권한이 필요합니다.
+- 연결되면 영어로 말하면 AI 튜터가 응답합니다.
+- 대화 내용이 실시간으로 텍스트로 표시됩니다.
 
 ## 참고 문서
 
@@ -123,9 +154,12 @@ You can preview the production build with `npm run preview`.
    2. 프로젝트 선택
    3. **Settings** 탭 클릭
    4. **Environment Variables** 메뉴 선택
-   5. 다음 환경 변수 추가:
-      - **Key**: `OPENAI_API_KEY`
-      - **Value**: `your-openai-api-key`
+   5. 다음 환경 변수들을 추가:
+      - `OPENAI_API_KEY`: OpenAI API 키
+      - `SUPABASE_DB_URL`: Supabase 프로젝트 URL
+      - `SUPABASE_DB_PUBLIC_KEY`: Supabase anon key
+      - `PUBLIC_SUPABASE_URL`: Supabase 프로젝트 URL (클라이언트용)
+      - `PUBLIC_SUPABASE_ANON_KEY`: Supabase anon key (클라이언트용)
       - **Environment**: `Production`, `Preview`, `Development` 모두 선택
    6. **Save** 클릭
    7. **재배포 필요**: 환경 변수 추가 후 반드시 재배포해야 적용됩니다!

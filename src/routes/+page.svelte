@@ -1,5 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { user, signOut } from '$lib/stores/authStore';
 
 	let mediaRecorder;
 	let audioChunks = [];
@@ -78,7 +80,15 @@
 	}
 
 	onMount(() => {
+		// 로그인 확인 - 로그인하지 않은 경우 로그인 페이지로 리다이렉트
+		const unsubscribe = user.subscribe(($user) => {
+			if ($user === null && typeof window !== 'undefined') {
+				goto('/login');
+			}
+		});
+		
 		return () => {
+			unsubscribe();
 			// 컴포넌트 언마운트 시 스트림 정리
 			if (stream) {
 				stream.getTracks().forEach(track => track.stop());
@@ -95,6 +105,16 @@
 			}
 		};
 	});
+	
+	// 로그아웃 처리
+	async function handleLogout() {
+		try {
+			await signOut();
+			goto('/login');
+		} catch (error) {
+			alert('로그아웃 중 오류가 발생했습니다.');
+		}
+	}
 
 	// Realtime API 연결
 	async function connectRealtime() {
@@ -758,6 +778,14 @@
 </script>
 
 <div class="container">
+	<!-- 사용자 정보 및 로그아웃 -->
+	{#if $user}
+		<div class="user-info">
+			<span class="user-email">👤 {$user.email}</span>
+			<button class="btn-logout" on:click={handleLogout}>로그아웃</button>
+		</div>
+	{/if}
+	
 	<h1>🎙️ 영어회화 연습</h1>
 	
 	<!-- 모드 전환 버튼 -->
@@ -958,6 +986,41 @@
 		margin: 0 auto;
 		padding: 2rem;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+	}
+	
+	.user-info {
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1rem;
+		padding: 0.75rem;
+		background: white;
+		border-radius: 10px;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+	}
+	
+	.user-email {
+		color: #555;
+		font-size: 0.9rem;
+		font-weight: 500;
+	}
+	
+	.btn-logout {
+		padding: 0.5rem 1rem;
+		background: #ef4444;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.3s ease;
+	}
+	
+	.btn-logout:hover {
+		background: #dc2626;
+		transform: translateY(-2px);
 	}
 
 	.mode-toggle {
