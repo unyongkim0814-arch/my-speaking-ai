@@ -33,6 +33,16 @@
 	let aiVolume = 1.0; // AI 음성 볼륨 (0.0 ~ 1.0)
 	let audioBlocked = false; // 브라우저의 오디오 차단 여부
 	
+	// 커스텀 프롬프트 관련
+	let showPromptEditor = false;
+	let customPrompt = '';
+	
+	// 기본 프롬프트 템플릿
+	const defaultPrompts = {
+		ko: '당신은 친근한 한국어 대화 상대입니다. 사용자와 자연스럽게 한국어로 대화하세요. 대화는 간결하고 친근하게 유지하세요. 필요한 경우 발음이나 문법에 대한 피드백을 제공할 수 있습니다.',
+		en: 'You are a friendly English conversation tutor. Help the user practice English conversation. Speak naturally and provide helpful feedback on their pronunciation and grammar. Keep responses concise and engaging. Use simple, clear English appropriate for language learners.'
+	};
+	
 	// 디버그 로그 관련
 	let debugLogs = [];
 	let showDebugPanel = false;
@@ -94,6 +104,9 @@
 			}
 		});
 		
+		// 저장된 커스텀 프롬프트 불러오기
+		loadCustomPrompt();
+		
 		return () => {
 			unsubscribe();
 			// 컴포넌트 언마운트 시 스트림 정리
@@ -112,6 +125,35 @@
 			}
 		};
 	});
+	
+	// 로컬스토리지에서 커스텀 프롬프트 불러오기
+	function loadCustomPrompt() {
+		if (typeof window !== 'undefined') {
+			const saved = localStorage.getItem(`customPrompt_${selectedLanguage}`);
+			customPrompt = saved || defaultPrompts[selectedLanguage];
+		}
+	}
+	
+	// 커스텀 프롬프트 저장
+	function saveCustomPrompt() {
+		if (typeof window !== 'undefined') {
+			localStorage.setItem(`customPrompt_${selectedLanguage}`, customPrompt);
+			alert('프롬프트가 저장되었습니다!');
+		}
+	}
+	
+	// 기본 프롬프트로 초기화
+	function resetToDefault() {
+		customPrompt = defaultPrompts[selectedLanguage];
+		if (typeof window !== 'undefined') {
+			localStorage.removeItem(`customPrompt_${selectedLanguage}`);
+		}
+	}
+	
+	// 언어 변경 시 해당 언어의 프롬프트 로드
+	$: if (selectedLanguage) {
+		loadCustomPrompt();
+	}
 	
 	// 로그아웃 처리
 	async function handleLogout() {
@@ -134,14 +176,18 @@
 			
 			addDebugLog('info', '실시간 대화 연결 시작');
 
-			// 서버에서 ephemeral key 가져오기
+			// 서버에서 ephemeral key 가져오기 (언어 정보 및 커스텀 프롬프트 전달)
 			console.log('Ephemeral key 요청 중...');
-			addDebugLog('info', 'Ephemeral key 요청 중...');
+			addDebugLog('info', 'Ephemeral key 요청 중...', { language: selectedLanguage });
 			const response = await fetch('/api/realtime', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
-				}
+				},
+				body: JSON.stringify({ 
+					language: selectedLanguage,
+					customPrompt: customPrompt || undefined
+				})
 			});
 
 			if (!response.ok) {
@@ -355,19 +401,6 @@
 				console.log('데이터 채널 열림');
 				addDebugLog('success', '데이터 채널 연결됨');
 				
-				// 언어별 AI 지시사항 및 음성 설정
-				const languageInstructions = {
-					ko: `당신은 친근한 한국어 대화 상대입니다.
-					사용자와 자연스럽게 한국어로 대화하세요.
-					대화는 간결하고 친근하게 유지하세요.
-					필요한 경우 발음이나 문법에 대한 피드백을 제공할 수 있습니다.`,
-					en: `You are a friendly English conversation tutor. 
-					Help the user practice English conversation. 
-					Speak naturally and provide helpful feedback on their pronunciation and grammar.
-					Keep responses concise and engaging. 
-					Use simple, clear English appropriate for language learners.`
-				};
-
 				const languageMessages = {
 					ko: '\n📝 세션 설정 완료. 이제 한국어로 말씀하세요! (음성으로 답변합니다)\n\n',
 					en: '\n📝 세션 설정 완료. 이제 영어로 말씀하세요! (AI will respond with voice)\n\n'
@@ -375,18 +408,25 @@
 
 				// 언어별 음성 선택 (OpenAI의 다국어 음성)
 				const languageVoices = {
-					ko: 'shimmer', // 또는 'alloy', 'echo', 'nova' 등
+					ko: 'shimmer',
 					en: 'alloy'
 				};
 				
-				// 세션 업데이트 메시지 전송
+				// 세션 업데이트 메시지 전송 (커스텀 프롬프트 사용)
 				const sessionUpdate = {
 					type: 'session.update',
 					session: {
-						instructions: languageInstructions[selectedLanguage],
-						voice: languageVoices[selectedLanguage],
-						input_audio_transcription: {
-							model: 'whisper-1'
+						type: 'realtime',
+						instructions: customPrompt || defaultPrompts[selectedLanguage],
+						audio: {
+							input: {
+								transcription: {
+									model: 'whisper-1'
+								}
+							},
+							output: {
+								voice: languageVoices[selectedLanguage]
+							}
 						}
 					}
 				};
@@ -397,7 +437,8 @@
 				addDebugLog('info', '세션 업데이트 전송', { 
 					language: selectedLanguage,
 					voice: languageVoices[selectedLanguage],
-					instructionsLength: languageInstructions[selectedLanguage].length
+					instructionsLength: sessionUpdate.session.instructions.length,
+					isCustom: !!customPrompt
 				});
 				conversationText += languageMessages[selectedLanguage];
 			};
@@ -1028,6 +1069,56 @@
 				/>
 				<span class="language-option">🇺🇸 영어</span>
 			</label>
+		</div>
+		
+		<!-- 프롬프트 커스터마이징 섹션 -->
+		<div class="prompt-customization">
+			<button 
+				class="prompt-toggle-btn" 
+				on:click={() => showPromptEditor = !showPromptEditor}
+			>
+				{showPromptEditor ? '📝 프롬프트 편집기 닫기' : '⚙️ AI 프롬프트 커스터마이징'}
+			</button>
+			
+			{#if showPromptEditor}
+				<div class="prompt-editor">
+					<div class="prompt-header">
+						<h3>🤖 AI 시스템 프롬프트 ({selectedLanguage === 'ko' ? '한국어' : '영어'})</h3>
+						<p class="prompt-description">
+							AI가 대화할 때 따를 지시사항을 설정하세요. 원하는 대화 스타일, 역할, 피드백 방식 등을 자유롭게 설정할 수 있습니다.
+						</p>
+					</div>
+					
+					<textarea 
+						class="prompt-textarea"
+						bind:value={customPrompt}
+						placeholder="AI 시스템 프롬프트를 입력하세요..."
+						rows="8"
+					></textarea>
+					
+					<div class="prompt-actions">
+						<button class="btn-prompt btn-save-prompt" on:click={saveCustomPrompt}>
+							💾 저장
+						</button>
+						<button class="btn-prompt btn-reset-prompt" on:click={resetToDefault}>
+							🔄 기본값으로 초기화
+						</button>
+					</div>
+					
+					<div class="prompt-tips">
+						<details>
+							<summary>💡 프롬프트 작성 팁</summary>
+							<ul>
+								<li>AI의 역할을 명확히 정의하세요 (예: "당신은 비즈니스 영어 전문 튜터입니다")</li>
+								<li>원하는 대화 스타일을 구체적으로 명시하세요 (친근한/격식있는/유머러스한 등)</li>
+								<li>피드백 방식을 지정하세요 (즉시 교정/대화 후 요약/격려 위주 등)</li>
+								<li>특정 주제나 상황에 집중하도록 할 수 있습니다 (여행 회화/면접 연습 등)</li>
+								<li>응답 길이를 조절할 수 있습니다 (간결하게/상세하게)</li>
+							</ul>
+						</details>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 	
@@ -1690,6 +1781,161 @@
 		transition: all 0.3s ease;
 	}
 
+	/* 프롬프트 커스터마이징 스타일 */
+	.prompt-customization {
+		margin-bottom: 2rem;
+	}
+
+	.prompt-toggle-btn {
+		width: 100%;
+		padding: 1rem;
+		background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+		color: white;
+		border: none;
+		border-radius: 12px;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.3s ease;
+		box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+	}
+
+	.prompt-toggle-btn:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+	}
+
+	.prompt-editor {
+		margin-top: 1rem;
+		background: white;
+		border-radius: 15px;
+		padding: 1.5rem;
+		box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+		animation: slideDown 0.3s ease;
+	}
+
+	@keyframes slideDown {
+		from {
+			opacity: 0;
+			transform: translateY(-10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.prompt-header h3 {
+		margin: 0 0 0.5rem 0;
+		color: #111827;
+		font-size: 1.2rem;
+	}
+
+	.prompt-description {
+		margin: 0 0 1rem 0;
+		color: #6b7280;
+		font-size: 0.9rem;
+		line-height: 1.5;
+	}
+
+	.prompt-textarea {
+		width: 100%;
+		padding: 1rem;
+		border: 2px solid #e5e7eb;
+		border-radius: 10px;
+		font-size: 0.95rem;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+		line-height: 1.6;
+		resize: vertical;
+		transition: border-color 0.3s ease;
+	}
+
+	.prompt-textarea:focus {
+		outline: none;
+		border-color: #667eea;
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+	}
+
+	.prompt-actions {
+		display: flex;
+		gap: 0.75rem;
+		margin-top: 1rem;
+	}
+
+	.btn-prompt {
+		flex: 1;
+		padding: 0.75rem 1.5rem;
+		border: none;
+		border-radius: 10px;
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.3s ease;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.btn-save-prompt {
+		background: #10b981;
+		color: white;
+	}
+
+	.btn-save-prompt:hover {
+		background: #059669;
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+	}
+
+	.btn-reset-prompt {
+		background: #f3f4f6;
+		color: #374151;
+		border: 2px solid #e5e7eb;
+	}
+
+	.btn-reset-prompt:hover {
+		background: #e5e7eb;
+		transform: translateY(-2px);
+	}
+
+	.prompt-tips {
+		margin-top: 1.5rem;
+		padding: 1rem;
+		background: #f9fafb;
+		border-radius: 10px;
+		border-left: 4px solid #667eea;
+	}
+
+	.prompt-tips details {
+		cursor: pointer;
+	}
+
+	.prompt-tips summary {
+		font-weight: 600;
+		color: #374151;
+		font-size: 0.95rem;
+		user-select: none;
+	}
+
+	.prompt-tips summary:hover {
+		color: #667eea;
+	}
+
+	.prompt-tips ul {
+		margin-top: 0.75rem;
+		margin-bottom: 0;
+		padding-left: 1.5rem;
+	}
+
+	.prompt-tips li {
+		color: #6b7280;
+		font-size: 0.9rem;
+		line-height: 1.6;
+		margin-bottom: 0.5rem;
+	}
+
+	.prompt-tips li:last-child {
+		margin-bottom: 0;
+	}
+
 	.recorder-section {
 		background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 		border-radius: 20px;
@@ -2103,6 +2349,18 @@
 
 		.volume-slider {
 			flex: 1;
+		}
+
+		.prompt-actions {
+			flex-direction: column;
+		}
+
+		.btn-prompt {
+			width: 100%;
+		}
+
+		.prompt-editor {
+			padding: 1rem;
 		}
 	}
 </style>
