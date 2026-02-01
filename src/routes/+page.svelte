@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { user, signOut } from '$lib/stores/authStore';
+	import { saveConversation } from '$lib/conversationStore';
 
 	let mediaRecorder;
 	let audioChunks = [];
@@ -25,6 +26,12 @@
 	let errorMessage = '';
 	let connectionStatus = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
 	let isDisconnecting = false;
+	let isSavingConversation = false;
+	let conversationStartTime = null;
+	let selectedLanguage = 'ko'; // 'ko' (한국어) 또는 'en' (영어)
+	let remoteAudio = null; // AI 음성 재생용 Audio 요소
+	let aiVolume = 1.0; // AI 음성 볼륨 (0.0 ~ 1.0)
+	let audioBlocked = false; // 브라우저의 오디오 차단 여부
 	
 	// 디버그 로그 관련
 	let debugLogs = [];
@@ -157,15 +164,120 @@
 			// RTCPeerConnection 생성
 			const pc = new RTCPeerConnection();
 			
+			addDebugLog('info', 'PeerConnection 생성됨', {
+				iceConnectionState: pc.iceConnectionState,
+				connectionState: pc.connectionState
+			});
+			
 			// 마이크 스트림 가져오기
 			addDebugLog('info', '마이크 스트림 가져오는 중...');
 			const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			
 			// 오디오 트랙 추가
 			mediaStream.getTracks().forEach(track => {
-				pc.addTrack(track, mediaStream);
-				addDebugLog('success', '오디오 트랙 추가됨', { kind: track.kind });
+				const sender = pc.addTrack(track, mediaStream);
+				addDebugLog('success', '오디오 트랙 추가됨', { 
+					kind: track.kind,
+					trackId: track.id,
+					enabled: track.enabled 
+				});
 			});
+			
+			// Track 이벤트 핸들러 먼저 등록 (SDP 교환 전에!)
+			pc.ontrack = (event) => {
+				console.log('⭐ 원격 트랙 수신:', event.track.kind, event.streams);
+				addDebugLog('success', '⭐ 원격 오디오 스트림 수신', { 
+					kind: event.track.kind,
+					streamCount: event.streams.length,
+					trackEnabled: event.track.enabled,
+					trackReadyState: event.track.readyState,
+					streamId: event.streams[0]?.id
+				});
+				
+				if (event.track.kind === 'audio') {
+					conversationText += '\n🔊 AI 음성 스트림 연결됨\n';
+					
+					// 기존 오디오 요소가 있으면 정리
+					if (remoteAudio) {
+						remoteAudio.pause();
+						remoteAudio.srcObject = null;
+					}
+					
+					// 새로운 Audio 요소 생성 및 설정
+					remoteAudio = new Audio();
+					remoteAudio.autoplay = true;
+					remoteAudio.volume = aiVolume;
+					
+					// MediaStream 연결
+					const stream = event.streams[0];
+					remoteAudio.srcObject = stream;
+					
+					console.log('Audio element created:', remoteAudio);
+					console.log('Stream tracks:', stream.getTracks());
+					
+					// 명시적으로 재생 시작
+					remoteAudio.play()
+						.then(() => {
+							addDebugLog('success', '🔊 AI 음성 재생 시작됨', {
+								volume: remoteAudio.volume,
+								paused: remoteAudio.paused,
+								muted: remoteAudio.muted
+							});
+							conversationText += '🎵 재생 중...\n';
+						})
+						.catch(err => {
+							console.error('오디오 재생 오류:', err);
+							addDebugLog('error', '오디오 재생 실패', { 
+								error: err.message,
+								name: err.name
+							});
+							conversationText += `\n⚠️ 음성 재생 오류: ${err.message}\n`;
+							
+							// 사용자 상호작용 후 재생 시도 안내
+							if (err.name === 'NotAllowedError') {
+								audioBlocked = true;
+								conversationText += '→ 브라우저가 자동 재생을 차단했습니다.\n→ 아래 "🔊 오디오 활성화" 버튼을 클릭하거나 볼륨을 조절해주세요.\n';
+							}
+						});
+					
+					// 스트림 이벤트 모니터링
+					stream.getTracks().forEach(track => {
+						track.onended = () => {
+							addDebugLog('info', 'Audio track ended');
+						};
+						track.onmute = () => {
+							addDebugLog('warning', 'Audio track muted');
+						};
+						track.onunmute = () => {
+							addDebugLog('info', 'Audio track unmuted');
+						};
+					});
+					
+					// 오디오 요소 이벤트
+					remoteAudio.onplay = () => {
+						addDebugLog('success', 'Audio element playing');
+					};
+					
+					remoteAudio.onpause = () => {
+						addDebugLog('info', 'Audio element paused');
+					};
+					
+					remoteAudio.onended = () => {
+						addDebugLog('info', 'Audio element ended');
+					};
+					
+					remoteAudio.onerror = (err) => {
+						addDebugLog('error', 'Audio element error', { error: err });
+					};
+					
+					remoteAudio.onloadedmetadata = () => {
+						addDebugLog('info', 'Audio metadata loaded', {
+							duration: remoteAudio.duration,
+							paused: remoteAudio.paused
+						});
+					};
+				}
+			};
 
 			// 데이터 채널 생성
 			const dc = pc.createDataChannel('oai-events');
@@ -201,7 +313,11 @@
 			await pc.setRemoteDescription(answer);
 			
 			addDebugLog('success', 'WebRTC 연결 완료');
-			conversationText += '\n✅ 연결 완료! 영어로 말해보세요.\n\n';
+			const readyMessages = {
+				ko: '\n✅ 연결 완료! 한국어로 말해보세요.\n\n',
+				en: '\n✅ Connection ready! Try speaking in English.\n\n'
+			};
+			conversationText += readyMessages[selectedLanguage] || readyMessages.ko;
 
 			// 연결 상태 모니터링
 			pc.onconnectionstatechange = () => {
@@ -234,49 +350,56 @@
 				}
 			};
 
-			// 원격 오디오 스트림 수신
-			pc.ontrack = (event) => {
-				console.log('원격 트랙 수신:', event.track.kind);
-				addDebugLog('success', '원격 오디오 스트림 수신', { kind: event.track.kind });
-				
-				if (event.track.kind === 'audio') {
-					const audioEl = new Audio();
-					audioEl.srcObject = event.streams[0];
-					audioEl.play().catch(err => {
-						console.error('오디오 재생 오류:', err);
-						addDebugLog('error', '오디오 재생 오류', { error: err.message });
-					});
-				}
-			};
-
 			// 데이터 채널 이벤트 처리
 			dc.onopen = () => {
 				console.log('데이터 채널 열림');
 				addDebugLog('success', '데이터 채널 연결됨');
 				
+				// 언어별 AI 지시사항 및 음성 설정
+				const languageInstructions = {
+					ko: `당신은 친근한 한국어 대화 상대입니다.
+					사용자와 자연스럽게 한국어로 대화하세요.
+					대화는 간결하고 친근하게 유지하세요.
+					필요한 경우 발음이나 문법에 대한 피드백을 제공할 수 있습니다.`,
+					en: `You are a friendly English conversation tutor. 
+					Help the user practice English conversation. 
+					Speak naturally and provide helpful feedback on their pronunciation and grammar.
+					Keep responses concise and engaging. 
+					Use simple, clear English appropriate for language learners.`
+				};
+
+				const languageMessages = {
+					ko: '\n📝 세션 설정 완료. 이제 한국어로 말씀하세요! (음성으로 답변합니다)\n\n',
+					en: '\n📝 세션 설정 완료. 이제 영어로 말씀하세요! (AI will respond with voice)\n\n'
+				};
+
+				// 언어별 음성 선택 (OpenAI의 다국어 음성)
+				const languageVoices = {
+					ko: 'shimmer', // 또는 'alloy', 'echo', 'nova' 등
+					en: 'alloy'
+				};
+				
 				// 세션 업데이트 메시지 전송
 				const sessionUpdate = {
 					type: 'session.update',
 					session: {
-						type: 'realtime',
-						instructions: `You are a friendly English conversation tutor. 
-						Help the user practice English conversation. 
-						Speak naturally and provide helpful feedback on their pronunciation and grammar.
-						Keep responses concise and engaging. 
-						Use simple, clear English appropriate for language learners.`,
-						audio: {
-							input: {
-								transcription: {
-									model: 'whisper-1'
-								}
-							}
+						instructions: languageInstructions[selectedLanguage],
+						voice: languageVoices[selectedLanguage],
+						input_audio_transcription: {
+							model: 'whisper-1'
 						}
 					}
 				};
 				
+				console.log('📤 세션 업데이트 전송:', JSON.stringify(sessionUpdate, null, 2));
+				
 				dc.send(JSON.stringify(sessionUpdate));
-				addDebugLog('info', '세션 설정 메시지 전송', { hasInstructions: true });
-				conversationText += '\n📝 세션 설정 완료. 이제 영어로 말씀하세요!\n\n';
+				addDebugLog('info', '세션 업데이트 전송', { 
+					language: selectedLanguage,
+					voice: languageVoices[selectedLanguage],
+					instructionsLength: languageInstructions[selectedLanguage].length
+				});
+				conversationText += languageMessages[selectedLanguage];
 			};
 
 			dc.onclose = () => {
@@ -314,9 +437,21 @@
 					// 다양한 이벤트 타입 처리
 					switch (message.type) {
 						case 'session.created':
+							conversationText += `\n✓ 세션 생성됨\n`;
+							addDebugLog('success', '세션 생성됨', { 
+								type: message.type,
+								voice: message.session?.audio?.output?.voice,
+								instructions: message.session?.instructions?.substring(0, 50)
+							});
+							break;
+							
 						case 'session.updated':
-							conversationText += `\n✓ ${message.type}\n`;
-							addDebugLog('success', '세션 설정 확인', { type: message.type });
+							conversationText += `\n✅ 세션 업데이트 완료!\n`;
+							addDebugLog('success', '세션 업데이트 확인', { 
+								type: message.type,
+								voice: message.session?.audio?.output?.voice || message.session?.voice,
+								instructionsLength: message.session?.instructions?.length
+							});
 							break;
 							
 						case 'conversation.item.created':
@@ -437,6 +572,7 @@
 			isConnected = true;
 			isRealtimeMode = true;
 			connectionStatus = 'connected';
+			conversationStartTime = new Date().toISOString();
 			console.log('모든 연결 완료');
 			addDebugLog('success', '모든 연결 완료! 대화 준비됨');
 
@@ -455,8 +591,31 @@
 		}
 	}
 
+	// 대화 저장 함수
+	async function saveCurrentConversation() {
+		if (!$user || !conversationText) {
+			return;
+		}
+
+		try {
+			isSavingConversation = true;
+			addDebugLog('info', '대화 내용 저장 시작...');
+			
+			await saveConversation($user.id, conversationText, debugLogs);
+			
+			addDebugLog('success', '대화 내용이 저장되었습니다');
+			conversationText += '\n\n✅ 대화 내용이 저장되었습니다.\n';
+		} catch (error) {
+			console.error('대화 저장 실패:', error);
+			addDebugLog('error', '대화 저장 실패', { error: error.message });
+			conversationText += '\n\n⚠️ 대화 저장에 실패했습니다.\n';
+		} finally {
+			isSavingConversation = false;
+		}
+	}
+
 	// Realtime API 연결 해제
-	function disconnectRealtime() {
+	async function disconnectRealtime() {
 		if (isDisconnecting) {
 			addDebugLog('warning', '이미 종료 진행 중입니다.');
 			return;
@@ -521,6 +680,20 @@
 				}
 			}
 			
+			// 4. 원격 오디오 정리
+			if (remoteAudio) {
+				try {
+					remoteAudio.pause();
+					remoteAudio.srcObject = null;
+					remoteAudio = null;
+					cleanupSteps.push('✓ AI 음성 스트림 정지');
+					addDebugLog('success', 'AI 음성 스트림 정리 완료');
+				} catch (err) {
+					cleanupSteps.push('⚠ AI 음성 스트림 정지 실패');
+					addDebugLog('warning', 'AI 음성 정리 오류', { error: err.message });
+				}
+			}
+			
 			realtimeSession = null;
 		}
 		
@@ -538,6 +711,11 @@
 			cleanupSteps: cleanupSteps.length,
 			timestamp: new Date().toISOString()
 		});
+		
+		// 대화 내용이 있으면 자동 저장
+		if (conversationText && conversationText.includes('[나]:')) {
+			await saveCurrentConversation();
+		}
 		
 		// 종료 후 3초 동안 추가 메시지 수신 모니터링
 		setTimeout(() => {
@@ -775,6 +953,42 @@
 		const secs = seconds % 60;
 		return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 	}
+
+	// AI 볼륨 변경 핸들러
+	function handleVolumeChange(event) {
+		aiVolume = parseFloat(event.target.value);
+		if (remoteAudio) {
+			remoteAudio.volume = aiVolume;
+			// 볼륨 조절 시 재생이 차단되어 있다면 다시 시도
+			if (audioBlocked && remoteAudio.paused) {
+				remoteAudio.play()
+					.then(() => {
+						audioBlocked = false;
+						conversationText += '\n✅ 오디오 재생이 활성화되었습니다!\n';
+						addDebugLog('success', '오디오 재생 활성화됨 (볼륨 조절)');
+					})
+					.catch(err => {
+						addDebugLog('warning', '오디오 재생 여전히 차단됨', { error: err.message });
+					});
+			}
+		}
+	}
+
+	// 오디오 활성화 버튼 클릭
+	function enableAudio() {
+		if (remoteAudio) {
+			remoteAudio.play()
+				.then(() => {
+					audioBlocked = false;
+					conversationText += '\n✅ 오디오 재생이 활성화되었습니다!\n';
+					addDebugLog('success', '사용자가 오디오를 활성화함');
+				})
+				.catch(err => {
+					addDebugLog('error', '오디오 활성화 실패', { error: err.message });
+					alert('오디오 재생에 실패했습니다: ' + err.message);
+				});
+		}
+	}
 </script>
 
 <div class="container">
@@ -782,11 +996,40 @@
 	{#if $user}
 		<div class="user-info">
 			<span class="user-email">👤 {$user.email}</span>
-			<button class="btn-logout" on:click={handleLogout}>로그아웃</button>
+			<div class="user-actions">
+				<button class="btn-history" on:click={() => goto('/history')}>
+					📚 대화 기록
+				</button>
+				<button class="btn-logout" on:click={handleLogout}>로그아웃</button>
+			</div>
 		</div>
 	{/if}
 	
-	<h1>🎙️ 영어회화 연습</h1>
+	<h1>🎙️ {selectedLanguage === 'ko' ? '한국어' : '영어'} 회화 연습</h1>
+	
+	<!-- 언어 선택 -->
+	{#if !isConnected && connectionStatus === 'disconnected'}
+		<div class="language-selector">
+			<label>
+				<input 
+					type="radio" 
+					name="language" 
+					value="ko" 
+					bind:group={selectedLanguage}
+				/>
+				<span class="language-option">🇰🇷 한국어</span>
+			</label>
+			<label>
+				<input 
+					type="radio" 
+					name="language" 
+					value="en" 
+					bind:group={selectedLanguage}
+				/>
+				<span class="language-option">🇺🇸 영어</span>
+			</label>
+		</div>
+	{/if}
 	
 	<!-- 모드 전환 버튼 -->
 	<div class="mode-toggle">
@@ -878,7 +1121,7 @@
 	{#if isRealtimeMode || connectionStatus !== 'disconnected'}
 		<!-- Realtime 대화 모드 -->
 		<div class="realtime-section">
-			<!-- 연결 상태 표시 -->
+			<!-- 연결 상태 및 볼륨 조절 -->
 			<div class="connection-status-box {connectionStatus}">
 				<div class="status-indicator">
 					{#if connectionStatus === 'connected'}
@@ -895,6 +1138,30 @@
 						<span class="status-text">⚫ 종료됨 (과금 안됨)</span>
 					{/if}
 				</div>
+				
+				{#if connectionStatus === 'connected'}
+					<div class="audio-controls">
+						{#if audioBlocked}
+							<button class="btn-enable-audio" on:click={enableAudio}>
+								🔊 오디오 활성화
+							</button>
+						{/if}
+						<div class="volume-control">
+							<span class="volume-icon">🔊</span>
+							<input 
+								type="range" 
+								min="0" 
+								max="1" 
+								step="0.1" 
+								value={aiVolume}
+								on:input={handleVolumeChange}
+								class="volume-slider"
+								title="AI 음성 볼륨"
+							/>
+							<span class="volume-value">{Math.round(aiVolume * 100)}%</span>
+						</div>
+					</div>
+				{/if}
 			</div>
 			
 			<div class="conversation-box">
@@ -905,13 +1172,22 @@
 			</div>
 			
 			{#if isConnected}
-				<button 
-					class="btn btn-disconnect" 
-					on:click={disconnectRealtime}
-					disabled={isDisconnecting}
-				>
-					{isDisconnecting ? '종료 중...' : '연결 종료'}
-				</button>
+				<div class="realtime-actions">
+					<button 
+						class="btn btn-save" 
+						on:click={saveCurrentConversation}
+						disabled={isSavingConversation || !conversationText.includes('[나]:')}
+					>
+						{isSavingConversation ? '💾 저장 중...' : '💾 대화 저장'}
+					</button>
+					<button 
+						class="btn btn-disconnect" 
+						on:click={disconnectRealtime}
+						disabled={isDisconnecting}
+					>
+						{isDisconnecting ? '종료 중...' : '연결 종료'}
+					</button>
+				</div>
 			{:else if connectionStatus === 'disconnected'}
 				<button 
 					class="btn btn-new-session" 
@@ -990,7 +1266,7 @@
 	
 	.user-info {
 		display: flex;
-		justify-content: flex-end;
+		justify-content: space-between;
 		align-items: center;
 		gap: 1rem;
 		margin-bottom: 1rem;
@@ -1004,6 +1280,28 @@
 		color: #555;
 		font-size: 0.9rem;
 		font-weight: 500;
+	}
+
+	.user-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.btn-history {
+		padding: 0.5rem 1rem;
+		background: #667eea;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.3s ease;
+	}
+
+	.btn-history:hover {
+		background: #5568d3;
+		transform: translateY(-2px);
 	}
 	
 	.btn-logout {
@@ -1080,6 +1378,11 @@
 		padding: 1rem 1.5rem;
 		margin-bottom: 1rem;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
 	}
 
 	.connection-status-box.connected {
@@ -1168,6 +1471,102 @@
 		color: #111827;
 	}
 
+	.audio-controls {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.btn-enable-audio {
+		padding: 0.5rem 1rem;
+		background: #10b981;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.3s ease;
+		animation: pulse-attention 1.5s ease-in-out infinite;
+	}
+
+	.btn-enable-audio:hover {
+		background: #059669;
+		transform: scale(1.05);
+	}
+
+	@keyframes pulse-attention {
+		0%, 100% {
+			box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+		}
+		50% {
+			box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+		}
+	}
+
+	.volume-control {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 1rem;
+		background: #f9fafb;
+		border-radius: 8px;
+	}
+
+	.volume-icon {
+		font-size: 1.2rem;
+	}
+
+	.volume-slider {
+		width: 120px;
+		height: 6px;
+		border-radius: 3px;
+		background: #e5e7eb;
+		outline: none;
+		-webkit-appearance: none;
+		appearance: none;
+		cursor: pointer;
+	}
+
+	.volume-slider::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: #667eea;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.volume-slider::-webkit-slider-thumb:hover {
+		background: #5568d3;
+		transform: scale(1.1);
+	}
+
+	.volume-slider::-moz-range-thumb {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: #667eea;
+		border: none;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.volume-slider::-moz-range-thumb:hover {
+		background: #5568d3;
+		transform: scale(1.1);
+	}
+
+	.volume-value {
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: #667eea;
+		min-width: 40px;
+		text-align: right;
+	}
+
 	.conversation-box {
 		background: white;
 		border-radius: 15px;
@@ -1191,10 +1590,31 @@
 		font-size: 0.95rem;
 	}
 
+	.realtime-actions {
+		display: flex;
+		gap: 0.5rem;
+		width: 100%;
+	}
+
+	.btn-save {
+		flex: 1;
+		background-color: #10b981;
+		color: white;
+	}
+
+	.btn-save:hover:not(:disabled) {
+		background-color: #059669;
+	}
+
+	.btn-save:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.btn-disconnect {
+		flex: 1;
 		background-color: #ef4444;
 		color: white;
-		width: 100%;
 	}
 
 	.btn-disconnect:hover:not(:disabled) {
@@ -1219,7 +1639,55 @@
 	h1 {
 		text-align: center;
 		color: #333;
+		margin-bottom: 1rem;
+	}
+
+	.language-selector {
+		display: flex;
+		justify-content: center;
+		gap: 1rem;
 		margin-bottom: 2rem;
+		padding: 1rem;
+		background: white;
+		border-radius: 15px;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	.language-selector label {
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+		padding: 0.75rem 1.5rem;
+		border-radius: 12px;
+		transition: all 0.3s ease;
+		border: 2px solid transparent;
+	}
+
+	.language-selector label:hover {
+		background: #f9fafb;
+	}
+
+	.language-selector input[type="radio"] {
+		margin-right: 0.5rem;
+		width: 18px;
+		height: 18px;
+		cursor: pointer;
+	}
+
+	.language-selector input[type="radio"]:checked + .language-option {
+		font-weight: 700;
+		color: #667eea;
+	}
+
+	.language-selector label:has(input:checked) {
+		background: #eff6ff;
+		border-color: #667eea;
+	}
+
+	.language-option {
+		font-size: 1rem;
+		color: #374151;
+		transition: all 0.3s ease;
 	}
 
 	.recorder-section {
@@ -1580,6 +2048,61 @@
 			width: calc(100vw - 40px);
 			right: 20px;
 			left: 20px;
+		}
+
+		.user-info {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.user-actions {
+			width: 100%;
+		}
+
+		.btn-history,
+		.btn-logout {
+			flex: 1;
+		}
+
+		.realtime-actions {
+			flex-direction: column;
+		}
+
+		.btn-save,
+		.btn-disconnect {
+			width: 100%;
+		}
+
+		.language-selector {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.language-selector label {
+			justify-content: center;
+		}
+
+		.connection-status-box {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.audio-controls {
+			width: 100%;
+			flex-direction: column;
+		}
+
+		.btn-enable-audio {
+			width: 100%;
+		}
+
+		.volume-control {
+			width: 100%;
+			justify-content: space-between;
+		}
+
+		.volume-slider {
+			flex: 1;
 		}
 	}
 </style>
