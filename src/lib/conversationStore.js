@@ -4,15 +4,25 @@ import { supabase } from './supabaseClientBrowser';
  * 대화 세션을 Supabase에 저장
  * @param {string} userId - 사용자 ID
  * @param {string} conversationText - 대화 내용
+ * @param {Object} aiSettings - AI 설정 정보 (언어, 음성, 모델, 프롬프트 등)
  * @param {Array} debugLogs - 디버그 로그 (선택사항)
  * @returns {Promise<Object>} 저장된 대화 데이터
  */
-export async function saveConversation(userId, conversationText, debugLogs = []) {
+export async function saveConversation(userId, conversationText, aiSettings = {}, debugLogs = []) {
 	try {
 		// 대화 내용을 구조화된 형태로 저장
 		const content = {
 			text: conversationText,
 			messages: parseConversationText(conversationText),
+			aiSettings: {
+				language: aiSettings.language || 'ko',
+				languageName: aiSettings.languageName || '한국어',
+				voice: aiSettings.voice || 'shimmer',
+				model: aiSettings.model || 'gpt-realtime',
+				prompt: aiSettings.prompt || '',
+				isCustomPrompt: aiSettings.isCustomPrompt || false,
+				sessionStartTime: aiSettings.sessionStartTime || new Date().toISOString()
+			},
 			metadata: {
 				savedAt: new Date().toISOString(),
 				messageCount: countMessages(conversationText)

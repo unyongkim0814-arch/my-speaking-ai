@@ -642,7 +642,23 @@
 			isSavingConversation = true;
 			addDebugLog('info', '대화 내용 저장 시작...');
 			
-			await saveConversation($user.id, conversationText, debugLogs);
+			// AI 설정 정보 수집
+			const languageVoices = {
+				ko: 'shimmer',
+				en: 'alloy'
+			};
+			
+			const aiSettings = {
+				language: selectedLanguage,
+				languageName: selectedLanguage === 'ko' ? '한국어' : '영어',
+				voice: languageVoices[selectedLanguage],
+				model: 'gpt-realtime',
+				prompt: customPrompt || defaultPrompts[selectedLanguage],
+				isCustomPrompt: !!customPrompt,
+				sessionStartTime: conversationStartTime
+			};
+			
+			await saveConversation($user.id, conversationText, aiSettings, debugLogs);
 			
 			addDebugLog('success', '대화 내용이 저장되었습니다');
 			conversationText += '\n\n✅ 대화 내용이 저장되었습니다.\n';

@@ -89,6 +89,19 @@
 		return `메시지 ${messages.length}개`;
 	}
 
+	function getAISettingsDisplay(conversation) {
+		const aiSettings = conversation.content?.aiSettings;
+		if (!aiSettings) {
+			return null;
+		}
+		return {
+			language: aiSettings.languageName || aiSettings.language || '알 수 없음',
+			voice: aiSettings.voice || '알 수 없음',
+			model: aiSettings.model || '알 수 없음',
+			isCustomPrompt: aiSettings.isCustomPrompt || false
+		};
+	}
+
 	function viewConversation(conversation) {
 		selectedConversation = conversation;
 	}
@@ -136,6 +149,22 @@
 							💬 {conversation.content?.metadata?.messageCount || 0}개
 						</div>
 					</div>
+					
+					{#if getAISettingsDisplay(conversation)}
+						<div class="ai-settings-badge">
+							<span class="badge-item">
+								{getAISettingsDisplay(conversation).language === '한국어' ? '🇰🇷' : '🇺🇸'} {getAISettingsDisplay(conversation).language}
+							</span>
+							<span class="badge-item">
+								🎤 {getAISettingsDisplay(conversation).voice}
+							</span>
+							{#if getAISettingsDisplay(conversation).isCustomPrompt}
+								<span class="badge-item custom">
+									⚙️ 커스텀
+								</span>
+							{/if}
+						</div>
+					{/if}
 					
 					<div class="card-summary">
 						{getConversationSummary(conversation)}
@@ -191,6 +220,43 @@
 							<strong>메시지:</strong> {selectedConversation.content?.metadata?.messageCount || 0}개
 						</div>
 					</div>
+					
+					{#if selectedConversation.content?.aiSettings}
+						<div class="ai-settings-detail">
+							<h3>🤖 AI 설정 정보</h3>
+							<div class="settings-grid">
+								<div class="setting-item">
+									<span class="setting-label">언어:</span>
+									<span class="setting-value">
+										{selectedConversation.content.aiSettings.languageName === '한국어' ? '🇰🇷' : '🇺🇸'} 
+										{selectedConversation.content.aiSettings.languageName || '알 수 없음'}
+									</span>
+								</div>
+								<div class="setting-item">
+									<span class="setting-label">음성:</span>
+									<span class="setting-value">🎤 {selectedConversation.content.aiSettings.voice || '알 수 없음'}</span>
+								</div>
+								<div class="setting-item">
+									<span class="setting-label">모델:</span>
+									<span class="setting-value">🧠 {selectedConversation.content.aiSettings.model || '알 수 없음'}</span>
+								</div>
+								<div class="setting-item">
+									<span class="setting-label">프롬프트:</span>
+									<span class="setting-value">
+										{selectedConversation.content.aiSettings.isCustomPrompt ? '⚙️ 커스텀' : '📝 기본'}
+									</span>
+								</div>
+							</div>
+							{#if selectedConversation.content.aiSettings.isCustomPrompt && selectedConversation.content.aiSettings.prompt}
+								<details class="prompt-details">
+									<summary>커스텀 프롬프트 보기</summary>
+									<div class="prompt-content">
+										{selectedConversation.content.aiSettings.prompt}
+									</div>
+								</details>
+							{/if}
+						</div>
+					{/if}
 					
 					<div class="conversation-messages">
 						{#if selectedConversation.content?.messages && selectedConversation.content.messages.length > 0}
@@ -369,6 +435,35 @@
 		font-weight: 600;
 	}
 
+	.ai-settings-badge {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		padding-bottom: 1rem;
+		border-bottom: 1px solid #f3f4f6;
+	}
+
+	.badge-item {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		background: #f9fafb;
+		color: #374151;
+		padding: 0.25rem 0.75rem;
+		border-radius: 8px;
+		font-size: 0.8rem;
+		font-weight: 500;
+		border: 1px solid #e5e7eb;
+	}
+
+	.badge-item.custom {
+		background: #fef3c7;
+		color: #92400e;
+		border-color: #fbbf24;
+		font-weight: 600;
+	}
+
 	.card-summary {
 		color: #374151;
 		line-height: 1.6;
@@ -490,6 +585,76 @@
 
 	.meta-item strong {
 		color: #111827;
+	}
+
+	.ai-settings-detail {
+		background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+		border-radius: 12px;
+		padding: 1.5rem;
+		margin-bottom: 1.5rem;
+		border: 2px solid #e0e7ff;
+	}
+
+	.ai-settings-detail h3 {
+		margin: 0 0 1rem 0;
+		color: #111827;
+		font-size: 1.1rem;
+	}
+
+	.settings-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.setting-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.setting-label {
+		font-size: 0.85rem;
+		color: #6b7280;
+		font-weight: 600;
+	}
+
+	.setting-value {
+		font-size: 0.95rem;
+		color: #111827;
+		font-weight: 500;
+	}
+
+	.prompt-details {
+		margin-top: 1rem;
+		cursor: pointer;
+	}
+
+	.prompt-details summary {
+		font-weight: 600;
+		color: #667eea;
+		padding: 0.5rem;
+		border-radius: 6px;
+		background: white;
+		user-select: none;
+		transition: all 0.2s ease;
+	}
+
+	.prompt-details summary:hover {
+		background: #f9fafb;
+	}
+
+	.prompt-content {
+		margin-top: 0.75rem;
+		padding: 1rem;
+		background: white;
+		border-radius: 8px;
+		border: 1px solid #e5e7eb;
+		color: #374151;
+		line-height: 1.6;
+		white-space: pre-wrap;
+		font-size: 0.9rem;
 	}
 
 	.conversation-messages {
